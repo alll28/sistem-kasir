@@ -123,7 +123,7 @@ export function PaymentPanel({ cart, onSetCart, discount, onSetDiscount, discoun
 
       <div className="space-y-2 border-t border-slate-100 px-4 py-4 dark:border-slate-800">
         <button ref={payButtonRef} type="button" className="flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-blue-700 to-blue-800 text-xs font-semibold text-white shadow-md shadow-blue-900/15 transition hover:-translate-y-0.5 hover:shadow-lg hover:shadow-blue-900/20 active:translate-y-0 disabled:cursor-not-allowed disabled:from-slate-300 disabled:to-slate-300 disabled:shadow-none dark:disabled:from-slate-700 dark:disabled:to-slate-700" disabled={!cart.length || isSaving} onClick={onOpenCheckout}>
-          {isSaving ? 'Menyimpan transaksi...' : 'Bayar (F9)'}
+          {isSaving ? 'Menyimpan transaksi...' : 'Bayar'}
         </button>
 
         <button type="button" className="flex h-10 w-full items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white text-xs font-semibold text-slate-500 transition hover:border-red-200 hover:bg-red-50 hover:text-red-600 disabled:cursor-not-allowed disabled:text-slate-400 dark:border-slate-700 dark:bg-slate-900 dark:hover:border-red-900 dark:hover:bg-red-950/30" disabled={!cart.length} onClick={onClearCart}>
