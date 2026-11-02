@@ -16,7 +16,7 @@ create table if not exists public.products (
 create table if not exists public.transactions (
   id uuid primary key default gen_random_uuid(),
   transaction_number text not null unique,
-  cashier_id uuid not null references auth.users(id),
+  cashier_id uuid references auth.users(id),
   payment_method text not null,
   subtotal bigint not null check (subtotal >= 0),
   discount_type text not null check (discount_type in ('percent', 'amount')),
@@ -46,30 +46,66 @@ alter table public.products enable row level security;
 alter table public.transactions enable row level security;
 alter table public.transaction_items enable row level security;
 
+alter table public.transactions
+  alter column cashier_id drop not null;
+
 drop policy if exists "Authenticated users can read products" on public.products;
 create policy "Authenticated users can read products"
   on public.products for select to authenticated using (true);
+
+drop policy if exists "Anyone can read products" on public.products;
+create policy "Anyone can read products"
+  on public.products for select to anon using (true);
 
 drop policy if exists "Authenticated users can add products" on public.products;
 create policy "Authenticated users can add products"
   on public.products for insert to authenticated with check (true);
 
+drop policy if exists "Anyone can add products" on public.products;
+create policy "Anyone can add products"
+  on public.products for insert to anon with check (true);
+
 drop policy if exists "Authenticated users can update products" on public.products;
 create policy "Authenticated users can update products"
   on public.products for update to authenticated using (true) with check (true);
+
+drop policy if exists "Anyone can update products" on public.products;
+create policy "Anyone can update products"
+  on public.products for update to anon using (true) with check (true);
+
+drop policy if exists "Authenticated users can delete products" on public.products;
+create policy "Authenticated users can delete products"
+  on public.products for delete to authenticated using (true);
+
+drop policy if exists "Anyone can delete products" on public.products;
+create policy "Anyone can delete products"
+  on public.products for delete to anon using (true);
 
 drop policy if exists "Authenticated users can read transactions" on public.transactions;
 create policy "Authenticated users can read transactions"
   on public.transactions for select to authenticated using (true);
 
+drop policy if exists "Anyone can read transactions" on public.transactions;
+create policy "Anyone can read transactions"
+  on public.transactions for select to anon using (true);
+
 drop policy if exists "Authenticated users can read transaction items" on public.transaction_items;
 create policy "Authenticated users can read transaction items"
   on public.transaction_items for select to authenticated using (true);
 
-grant select, insert, update on public.products to authenticated;
+drop policy if exists "Anyone can read transaction items" on public.transaction_items;
+create policy "Anyone can read transaction items"
+  on public.transaction_items for select to anon using (true);
+
+revoke all on public.products, public.transactions, public.transaction_items from anon;
+revoke all on public.products, public.transactions, public.transaction_items from authenticated;
+
+grant select, insert, update, delete on public.products to authenticated;
 grant select on public.transactions, public.transaction_items to authenticated;
 grant usage, select on sequence public.transaction_items_id_seq to authenticated;
-revoke all on public.products, public.transactions, public.transaction_items from anon;
+grant select, insert, update, delete on public.products to anon;
+grant select on public.transactions, public.transaction_items to anon;
+grant usage, select on sequence public.transaction_items_id_seq to anon;
 
 insert into storage.buckets (id, name, public)
 values ('product-images', 'product-images', true)
@@ -83,9 +119,25 @@ drop policy if exists "Authenticated users can upload product images" on storage
 create policy "Authenticated users can upload product images"
   on storage.objects for insert to authenticated with check (bucket_id = 'product-images');
 
+drop policy if exists "Anyone can upload product images" on storage.objects;
+create policy "Anyone can upload product images"
+  on storage.objects for insert to anon with check (bucket_id = 'product-images');
+
 drop policy if exists "Authenticated users can update product images" on storage.objects;
 create policy "Authenticated users can update product images"
   on storage.objects for update to authenticated using (bucket_id = 'product-images') with check (bucket_id = 'product-images');
+
+drop policy if exists "Anyone can update product images" on storage.objects;
+create policy "Anyone can update product images"
+  on storage.objects for update to anon using (bucket_id = 'product-images') with check (bucket_id = 'product-images');
+
+drop policy if exists "Authenticated users can delete product images" on storage.objects;
+create policy "Authenticated users can delete product images"
+  on storage.objects for delete to authenticated using (bucket_id = 'product-images');
+
+drop policy if exists "Anyone can delete product images" on storage.objects;
+create policy "Anyone can delete product images"
+  on storage.objects for delete to anon using (bucket_id = 'product-images');
 
 create or replace function public.complete_sale(
   p_transaction_number text,
@@ -111,10 +163,7 @@ declare
   v_tax_amount bigint := 0;
   v_total bigint := 0;
 begin
-  if v_cashier_id is null then
-    raise exception 'Login kasir diperlukan untuk menyimpan transaksi.';
-  end if;
-  if p_payment_method not in ('Tunai', 'QRIS', 'Debit') then
+  if p_payment_method not in ('Tunai', 'QRIS') then
     raise exception 'Metode pembayaran tidak valid.';
   end if;
   if p_discount_type not in ('percent', 'amount') or p_discount_value < 0 then
@@ -122,6 +171,14 @@ begin
   end if;
   if coalesce(jsonb_typeof(p_items), '') <> 'array' or jsonb_array_length(p_items) = 0 then
     raise exception 'Keranjang transaksi kosong.';
+  end if;
+  if exists (
+    select 1
+    from jsonb_array_elements(p_items) as entry(value)
+    group by entry.value ->> 'product_id'
+    having count(*) > 1
+  ) then
+    raise exception 'Produk yang sama tidak boleh muncul lebih dari satu kali dalam keranjang.';
   end if;
 
   for v_item in select value from jsonb_array_elements(p_items)
@@ -197,14 +254,4 @@ $$;
 
 revoke all on function public.complete_sale(text, text, text, bigint, boolean, jsonb) from public, anon;
 grant execute on function public.complete_sale(text, text, text, bigint, boolean, jsonb) to authenticated;
-
-insert into public.products (id, name, category, price, purchase_price, stock, unit, image)
-values
-  ('BRG-051', 'Mie Goreng Telur', 'Makanan', 12000, null, 120, 'Satuan', 'photo-1569718212165-3a8278d5f624'),
-  ('BRG-052', 'Mie Goreng Telur + Sosis + Bakso', 'Makanan', 18000, null, 33, 'Satuan', 'photo-1565299624946-b28f40a0ae38'),
-  ('BRG-053', 'Roti Bakar Madu Rasa', 'Makanan', 15000, null, 32, 'Satuan', 'photo-1525351484163-7529414344d8'),
-  ('BRG-054', 'Martabak Manis Coklat', 'Makanan', 15000, null, 3, 'Satuan', 'photo-1601050690597-df0568f70950'),
-  ('BRG-001', 'Air Mineral 600ml', 'Minuman', 5000, null, 120, 'Satuan', 'photo-1602143407151-7111542de6e8'),
-  ('BRG-002', 'Es Teh Jumbo', 'Minuman', 8000, null, 81, 'Satuan', 'photo-1556679343-c7306c1976bc'),
-  ('BRG-003', 'Ocha 500ml', 'Minuman', 8000, null, 32, 'Satuan', 'photo-1559839914-17aae19cec71')
-on conflict (id) do nothing;
+grant execute on function public.complete_sale(text, text, text, bigint, boolean, jsonb) to anon;

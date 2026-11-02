@@ -9,18 +9,18 @@ import { ModuleContent } from './components/cashier/ModuleContent'
 import { CheckoutModal } from './components/cashier/CheckoutModal'
 import { Toast } from './components/ui/Toast'
 import { Icon } from './assets/icons'
-import { LoginForm } from './components/auth/LoginForm'
 import { SalesReport } from './components/cashier/SalesReport'
 import { TransactionHistory } from './components/cashier/TransactionHistory'
 import {
   createProduct,
+  deleteProduct as deleteProductFromSupabase,
   fetchProducts,
   fetchTransactions,
   saveSale,
-  signOut,
   supabase,
   supabaseConfigIncomplete,
   supabaseConfigured,
+  updateProduct,
 } from './lib/supabase'
 
 function App() {
@@ -29,8 +29,6 @@ function App() {
   const [search, setSearch] = useState('')
   const [productList, setProductList] = useState(products)
   const [transactions, setTransactions] = useState([])
-  const [session, setSession] = useState(null)
-  const [authReady, setAuthReady] = useState(!supabaseConfigured)
   const [dataReady, setDataReady] = useState(!supabaseConfigured)
   const [databaseError, setDatabaseError] = useState('')
   const [isSavingTransaction, setIsSavingTransaction] = useState(false)
@@ -39,42 +37,20 @@ function App() {
   const [discountType, setDiscountType] = useState('percent')
   const [taxEnabled, setTaxEnabled] = useState(true)
   const [paymentMethod, setPaymentMethod] = useState('Tunai')
+  const [qrisMode, setQrisMode] = useState('tampil')
   const [isCollapsed, setIsCollapsed] = useState(false)
+  const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false)
   const [isDark, setIsDark] = useState(false)
   const [showCheckout, setShowCheckout] = useState(false)
+  const [successTransaction, setSuccessTransaction] = useState(null)
   const [toast, setToast] = useState('')
   const [clock, setClock] = useState(new Date())
   const searchRef = useRef(null)
   const discountRef = useRef(null)
+  const payButtonRef = useRef(null)
 
   useEffect(() => {
     if (!supabase) return undefined
-
-    let active = true
-    const loadSession = async () => {
-      const { data, error } = await supabase.auth.getSession()
-      if (!active) return
-      if (error) setDatabaseError(error.message)
-      setSession(data.session)
-      setAuthReady(true)
-      if (!data.session) setDataReady(true)
-    }
-
-    loadSession()
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, nextSession) => {
-      setSession(nextSession)
-      setDataReady(!nextSession)
-      setDatabaseError('')
-    })
-
-    return () => {
-      active = false
-      subscription.unsubscribe()
-    }
-  }, [])
-
-  useEffect(() => {
-    if (!supabase || !session) return undefined
 
     let active = true
     const loadStoreData = async () => {
@@ -102,33 +78,12 @@ function App() {
     return () => {
       active = false
     }
-  }, [session])
+  }, [])
 
   useEffect(() => {
     const timer = window.setInterval(() => setClock(new Date()), 30000)
     return () => window.clearInterval(timer)
   }, [])
-
-  useEffect(() => {
-    const handleShortcut = (event) => {
-      if (event.key === 'F2') {
-        event.preventDefault()
-        searchRef.current?.focus()
-      }
-      if (event.key === 'F7') {
-        event.preventDefault()
-        discountRef.current?.focus()
-      }
-      if (event.key === 'F9') {
-        event.preventDefault()
-        if (cart.length) setShowCheckout(true)
-      }
-      if (event.key === 'Escape') setShowCheckout(false)
-    }
-
-    window.addEventListener('keydown', handleShortcut)
-    return () => window.removeEventListener('keydown', handleShortcut)
-  }, [cart.length])
 
   const visibleProducts = useMemo(() => productList.filter((product) => {
     const matchesCategory = category === 'Semua produk' || (category === 'Lainnya' ? false : product.category === category)
@@ -157,6 +112,23 @@ function App() {
     showMessage.timeoutId = window.setTimeout(() => setToast(''), 2600)
   }
 
+  const selectedPaymentMethod = paymentMethod === 'QRIS'
+    ? `QRIS (${qrisMode === 'tampil' ? 'Tampilkan QRIS' : 'Scan QRIS'})`
+    : paymentMethod
+
+  const handleSelectPayment = (method) => {
+    setPaymentMethod(method)
+    if (method !== 'QRIS') {
+      setQrisMode('tampil')
+      return
+    }
+    setQrisMode('pilih')
+  }
+
+  const handleSelectQrisMode = (mode) => {
+    setQrisMode(mode)
+  }
+
   const addToCart = (product) => {
     if (product.stock < 1) {
       showMessage('Stok produk sedang habis.')
@@ -182,6 +154,33 @@ function App() {
     showMessage(`Produk ${newProduct.name} berhasil ditambahkan.`)
   }
 
+  const editProduct = async (updatedProduct) => {
+    const savedProduct = supabase ? await updateProduct(updatedProduct) : updatedProduct
+    setProductList((current) => current.map((product) => product.id === savedProduct.id ? savedProduct : product))
+    const cartItem = cart.find((item) => item.product.id === savedProduct.id)
+    setCart((current) => current.flatMap((item) => {
+      if (item.product.id !== savedProduct.id) return [item]
+      if (savedProduct.stock < 1) return []
+      return [{ ...item, product: savedProduct, quantity: Math.min(item.quantity, savedProduct.stock) }]
+    }))
+    if (cartItem && savedProduct.stock < cartItem.quantity) {
+      showMessage(savedProduct.stock
+        ? `Produk diperbarui. Jumlah ${savedProduct.name} di keranjang disesuaikan dengan stok.`
+        : `Produk diperbarui dan ${savedProduct.name} dihapus dari keranjang karena stok habis.`)
+    } else {
+      showMessage(`Produk ${savedProduct.name} berhasil diperbarui.`)
+    }
+  }
+
+  const removeProduct = async (productId) => {
+    const cleanupError = supabase ? await deleteProductFromSupabase(productId) : ''
+    setProductList((current) => current.filter((product) => product.id !== productId))
+    setCart((current) => current.filter((item) => item.product.id !== productId))
+    showMessage(cleanupError
+      ? `Produk berhasil dihapus, tetapi foto produk belum terhapus: ${cleanupError}`
+      : 'Produk berhasil dihapus.')
+  }
+
   const completeTransaction = async () => {
     if (!cart.length || isSavingTransaction) return
 
@@ -201,7 +200,7 @@ function App() {
         const savedTransaction = {
           id: transactionNumber,
           transaction_number: transactionNumber,
-          payment_method: paymentMethod,
+          payment_method: selectedPaymentMethod,
           subtotal,
           discount_amount: discountValue,
           tax_amount: tax,
@@ -227,9 +226,9 @@ function App() {
         const savedTransaction = {
           id: transactionNumber,
           transaction_number: transactionNumber,
-          payment_method: paymentMethod,
-          subtotal,
-          discount_amount: discountValue,
+
+          payment_method: selectedPaymentMethod,
+          subtotal,          discount_amount: discountValue,
           tax_amount: tax,
           total_amount: total,
           created_at: createdAt,
@@ -253,7 +252,11 @@ function App() {
       setCart([])
       setDiscount('')
       setShowCheckout(false)
-      showMessage(`Transaksi ${transactionNumber} berhasil disimpan.`)
+      setSuccessTransaction({
+        transactionNumber,
+        paymentMethod: selectedPaymentMethod,
+        total,
+      })
       if (supabase) {
         try {
           const [loadedProducts, loadedTransactions] = await Promise.all([
@@ -274,25 +277,39 @@ function App() {
     }
   }
 
-  const handleLogout = async () => {
-    if (supabase) {
-      try {
-        await signOut()
-      } catch (error) {
-        showMessage(`Gagal keluar: ${error.message}`)
-      }
+  const handleOpenCheckout = () => {
+    if (paymentMethod === 'Tunai') {
+      completeTransaction()
       return
     }
-    showMessage('Sesi kasir tetap aktif.')
+    setQrisMode('pilih')
+    setShowCheckout(true)
   }
 
-  if (supabaseConfigured && !authReady) {
-    return <div className="grid min-h-screen place-items-center bg-slate-100 text-sm text-slate-600 dark:bg-slate-950 dark:text-slate-300">Memeriksa sesi kasir...</div>
-  }
+  useEffect(() => {
+    const handleShortcut = (event) => {
+      if (event.key === 'F2') {
+        event.preventDefault()
+        searchRef.current?.focus()
+      }
+      if (event.key === 'F7') {
+        event.preventDefault()
+        discountRef.current?.focus()
+      }
+      if (event.key === 'F9') {
+        event.preventDefault()
+        if (cart.length) payButtonRef.current?.click()
+      }
+      if (event.key === 'Escape') {
+        setShowCheckout(false)
+        setSuccessTransaction(null)
+        setIsMobileSidebarOpen(false)
+      }
+    }
 
-  if (supabaseConfigured && !session) {
-    return <LoginForm />
-  }
+    window.addEventListener('keydown', handleShortcut)
+    return () => window.removeEventListener('keydown', handleShortcut)
+  }, [cart.length])
 
   if (supabaseConfigured && !dataReady) {
     return <div className="grid min-h-screen place-items-center bg-slate-100 text-sm text-slate-600 dark:bg-slate-950 dark:text-slate-300">Memuat produk dan transaksi...</div>
@@ -300,24 +317,25 @@ function App() {
 
   return (
     <div className={isDark ? 'dark' : ''}>
-      <div className="min-h-screen bg-slate-100 text-slate-800 transition-colors duration-200 dark:bg-slate-950 dark:text-slate-50">
+      <div className="min-h-screen bg-gradient-to-br from-white via-sky-50/70 to-amber-50/50 text-slate-800 transition-colors duration-200 dark:from-[#071426] dark:via-[#0b1e3d] dark:to-[#102b55] dark:text-slate-50">
         <div className="flex min-h-screen flex-col lg:flex-row">
           <Sidebar
             activePage={activePage}
             isCollapsed={isCollapsed}
             isDark={isDark}
+            isMobileOpen={isMobileSidebarOpen}
             onToggleSidebar={() => setIsCollapsed((value) => !value)}
             onToggleTheme={() => setIsDark((value) => !value)}
             onSelectPage={(page) => setActivePage(page)}
-            onLogout={handleLogout}
+            onCloseMobile={() => setIsMobileSidebarOpen(false)}
           />
 
-          <main className="flex-1 min-w-0 p-4 md:p-5 xl:p-6">
+          <main className="mx-auto min-w-0 w-full max-w-[1800px] flex-1 p-4 md:p-6 xl:p-8">
             <TopBar
               activePage={activePage}
               clock={clock}
-              onNotify={() => showMessage('Tidak ada notifikasi baru.')}
-              onProfileClick={() => showMessage('Anda masuk sebagai kasir.')}
+              isMobileSidebarOpen={isMobileSidebarOpen}
+              onToggleMobileSidebar={() => setIsMobileSidebarOpen((value) => !value)}
             />
 
             {!supabaseConfigured && (
@@ -344,6 +362,7 @@ function App() {
                     visibleProducts={visibleProducts}
                     categories={productCategories}
                     onAddToCart={addToCart}
+                    onManageProducts={() => setActivePage('Barang & Stok')}
                   />
                 </div>
 
@@ -357,13 +376,15 @@ function App() {
                   taxEnabled={taxEnabled}
                   onToggleTax={() => setTaxEnabled((value) => !value)}
                   paymentMethod={paymentMethod}
-                  onSelectPayment={setPaymentMethod}
+                  onSelectPayment={handleSelectPayment}
                   itemCount={itemCount}
                   subtotal={subtotal}
                   discountValue={discountValue}
                   tax={tax}
                   total={total}
-                  onOpenCheckout={() => setShowCheckout(true)}
+                  isSaving={isSavingTransaction}
+                  payButtonRef={payButtonRef}
+                  onOpenCheckout={handleOpenCheckout}
                   onClearCart={() => {
                     setCart([])
                     setDiscount('')
@@ -382,6 +403,8 @@ function App() {
                 productList={productList}
                 categories={productCategories}
                 onAddProduct={addProduct}
+                onUpdateProduct={editProduct}
+                onDeleteProduct={removeProduct}
                 onBackToCashier={() => setActivePage('Kasir')}
               />
             )}
@@ -401,11 +424,42 @@ function App() {
           <CheckoutModal
             itemCount={itemCount}
             paymentMethod={paymentMethod}
+            qrisMode={qrisMode}
+            onSelectQrisMode={handleSelectQrisMode}
             total={total}
             onClose={() => setShowCheckout(false)}
             onComplete={completeTransaction}
             isSaving={isSavingTransaction}
           />
+        )}
+
+        {successTransaction && (
+          <div className="fixed inset-0 z-[70] grid place-items-center bg-slate-950/50 p-4 backdrop-blur-sm">
+            <section className="w-full max-w-sm rounded-2xl border border-slate-200 bg-white p-6 text-center shadow-2xl dark:border-slate-700 dark:bg-slate-900" role="dialog" aria-modal="true" aria-labelledby="payment-success-title">
+              <div className="mx-auto grid h-16 w-16 place-items-center rounded-full bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300">
+                <Icon name="check" size={30} />
+              </div>
+              <h2 id="payment-success-title" className="mt-4 text-xl font-bold text-slate-900 dark:text-white">Pembayaran berhasil</h2>
+              <p className="mt-2 text-sm text-slate-500 dark:text-slate-400">Transaksi {successTransaction.transactionNumber} berhasil diselesaikan.</p>
+              <div className="mt-5 space-y-3 rounded-xl bg-slate-50 p-4 text-left text-sm dark:bg-slate-800">
+                <div className="flex items-center justify-between gap-3">
+                  <span className="text-slate-500 dark:text-slate-400">Metode pembayaran</span>
+                  <strong className="text-right text-slate-800 dark:text-slate-100">{successTransaction.paymentMethod}</strong>
+                </div>
+                <div className="flex items-center justify-between gap-3">
+                  <span className="text-slate-500 dark:text-slate-400">Total</span>
+                  <strong className="text-blue-700 dark:text-blue-300">{new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', maximumFractionDigits: 0 }).format(successTransaction.total)}</strong>
+                </div>
+              </div>
+              <button
+                type="button"
+                className="mt-5 h-10 w-full rounded-xl bg-blue-700 text-sm font-semibold text-white transition hover:bg-blue-800"
+                onClick={() => setSuccessTransaction(null)}
+              >
+                Selesai
+              </button>
+            </section>
+          </div>
         )}
 
         {toast && <Toast message={toast} />}

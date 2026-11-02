@@ -90,6 +90,36 @@ export async function createProduct(product) {
   return mapProduct(data)
 }
 
+export async function updateProduct(product) {
+  const [image, barcodeImage] = await Promise.all([
+    uploadProductImage(product.image, product.id, 'product'),
+    uploadProductImage(product.barcodeImage, product.id, 'barcode'),
+  ])
+  const row = {
+    name: product.name,
+    category: product.category,
+    purchase_price: product.purchasePrice,
+    price: product.price,
+    unit: product.unit,
+    stock: product.stock,
+    image,
+    description: product.description,
+    barcode: product.barcode || null,
+    barcode_image: barcodeImage,
+  }
+  const data = throwOnError(await supabase.from('products').update(row).eq('id', product.id).select().single())
+  return mapProduct(data)
+}
+
+export async function deleteProduct(productId) {
+  throwOnError(await supabase.from('products').delete().eq('id', productId).select('id').single())
+
+  const { error } = await supabase.storage
+    .from('product-images')
+    .remove([`${productId}/product`, `${productId}/barcode`])
+  return error?.message || ''
+}
+
 export async function fetchTransactions() {
   const data = throwOnError(await supabase
     .from('transactions')

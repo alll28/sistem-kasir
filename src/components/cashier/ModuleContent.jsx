@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Icon } from '../../assets/icons'
 import { navigation } from '../../data/products'
-import { getProductImageUrl } from '../../utils/productImage'
+import { ProductThumbnail } from '../ui/ProductThumbnail'
 
 const defaultForm = {
   name: '',
@@ -15,8 +15,8 @@ const defaultForm = {
   barcode: '',
 }
 
-const fieldClassName = 'w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm text-slate-700 outline-none transition focus:border-blue-400 focus:ring-4 focus:ring-blue-100 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 dark:focus:ring-blue-900/40'
-const labelClassName = 'grid gap-1.5 text-[11px] font-medium text-slate-600 dark:text-slate-300'
+const fieldClassName = 'block w-full min-w-0 max-w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm text-slate-700 outline-none transition focus:border-blue-400 focus:bg-white focus:ring-4 focus:ring-blue-100 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 dark:focus:border-blue-500 dark:focus:bg-slate-800 dark:focus:ring-blue-900/40'
+const labelClassName = 'grid min-w-0 gap-1.5 text-[11px] font-medium text-slate-600 dark:text-slate-300'
 
 function readImageFile(file) {
   return new Promise((resolve, reject) => {
@@ -27,12 +27,22 @@ function readImageFile(file) {
   })
 }
 
-export function ModuleContent({ activePage, productList, categories, onAddProduct, onBackToCashier }) {
+export function ModuleContent({ activePage, productList, categories, onAddProduct, onUpdateProduct, onDeleteProduct, onBackToCashier }) {
   const selectedIcon = navigation.find((item) => item.id === activePage)?.icon || 'box'
-  const [form, setForm] = useState(defaultForm)
+  const availableCategories = useMemo(
+    () => categories.filter((item) => item !== 'Semua produk' && item !== 'Lainnya'),
+    [categories],
+  )
+  const [form, setForm] = useState(() => ({
+    ...defaultForm,
+    category: availableCategories[0] || '__new_category__',
+  }))
   const [productImage, setProductImage] = useState('')
   const [barcodeImage, setBarcodeImage] = useState('')
   const [formError, setFormError] = useState('')
+  const [productActionError, setProductActionError] = useState('')
+  const [editingProductId, setEditingProductId] = useState('')
+  const [isSavingProduct, setIsSavingProduct] = useState(false)
   const [imageFeedback, setImageFeedback] = useState('')
   const [barcodeFeedback, setBarcodeFeedback] = useState('')
   const [showBarcodePhotoOptions, setShowBarcodePhotoOptions] = useState(false)
@@ -44,11 +54,6 @@ export function ModuleContent({ activePage, productList, categories, onAddProduc
   const cameraVideoRef = useRef(null)
   const cameraStreamRef = useRef(null)
   const scannerControlsRef = useRef(null)
-
-  const availableCategories = useMemo(
-    () => categories.filter((item) => item !== 'Semua produk' && item !== 'Lainnya'),
-    [categories],
-  )
 
   const summary = useMemo(() => {
     const totalStock = productList.reduce((sum, product) => sum + Number(product.stock || 0), 0)
@@ -236,10 +241,36 @@ export function ModuleContent({ activePage, productList, categories, onAddProduc
   }
 
   const resetForm = () => {
-    setForm(defaultForm)
+    setForm({
+      ...defaultForm,
+      category: availableCategories[0] || '__new_category__',
+    })
     setProductImage('')
     setBarcodeImage('')
     setFormError('')
+    setImageFeedback('')
+    setBarcodeFeedback('')
+    setShowBarcodePhotoOptions(false)
+    setEditingProductId('')
+  }
+
+  const startEditingProduct = (product) => {
+    setEditingProductId(product.id)
+    setForm({
+      name: product.name,
+      category: product.category,
+      newCategory: '',
+      purchasePrice: product.purchasePrice ?? '',
+      price: product.price,
+      unit: product.unit || 'Satuan',
+      stock: product.stock,
+      description: product.description || '',
+      barcode: product.barcode || '',
+    })
+    setProductImage(product.image || '')
+    setBarcodeImage(product.barcodeImage || '')
+    setFormError('')
+    setProductActionError('')
     setImageFeedback('')
     setBarcodeFeedback('')
     setShowBarcodePhotoOptions(false)
@@ -275,20 +306,24 @@ export function ModuleContent({ activePage, productList, categories, onAddProduc
       setFormError('Jumlah stok wajib diisi dan tidak boleh kurang dari 0.')
       return
     }
-    if (barcode && productList.some((product) => product.barcode === barcode)) {
+    if (barcode && productList.some((product) => product.id !== editingProductId && product.barcode === barcode)) {
       setFormError('Barcode tersebut sudah digunakan produk lain.')
       return
     }
 
-    let idNumber = Date.now()
-    let id = `BRG-${String(idNumber).slice(-6)}`
-    while (productList.some((product) => product.id === id)) {
-      idNumber += 1
+    let id = editingProductId
+    if (!id) {
+      let idNumber = Date.now()
       id = `BRG-${String(idNumber).slice(-6)}`
+      while (productList.some((product) => product.id === id)) {
+        idNumber += 1
+        id = `BRG-${String(idNumber).slice(-6)}`
+      }
     }
 
+    setIsSavingProduct(true)
     try {
-      await onAddProduct({
+      const product = {
         id,
         name,
         category: productCategory,
@@ -296,20 +331,39 @@ export function ModuleContent({ activePage, productList, categories, onAddProduc
         price,
         unit: form.unit,
         stock,
-        image: productImage || 'photo-1565958011703-44f9829ba187',
+        image: productImage,
         description: form.description.trim(),
         barcode,
         barcodeImage,
-      })
+      }
+      if (editingProductId) {
+        await onUpdateProduct(product)
+      } else {
+        await onAddProduct(product)
+      }
       resetForm()
     } catch (error) {
-      setFormError(`Produk gagal disimpan: ${error.message}`)
+      setFormError(`Produk gagal ${editingProductId ? 'diperbarui' : 'disimpan'}: ${error.message}`)
+    } finally {
+      setIsSavingProduct(false)
+    }
+  }
+
+  const handleDeleteProduct = async (product) => {
+    if (!window.confirm(`Hapus produk "${product.name}"?`)) return
+
+    setProductActionError('')
+    try {
+      await onDeleteProduct(product.id)
+      if (editingProductId === product.id) resetForm()
+    } catch (error) {
+      setProductActionError(`Produk ${product.name} gagal dihapus: ${error.message}`)
     }
   }
 
   if (activePage !== 'Barang & Stok') {
     return (
-      <section className="max-w-[1060px]">
+      <section className="w-full min-w-0 max-w-[1060px]">
         <div className="flex items-center gap-4 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-700 dark:bg-slate-900">
           <div className="grid h-12 w-12 place-items-center rounded-2xl bg-blue-50 text-blue-700 dark:bg-slate-800 dark:text-blue-300">
             <Icon name={selectedIcon} size={24} />
@@ -359,20 +413,20 @@ export function ModuleContent({ activePage, productList, categories, onAddProduc
         </div>
       </div>
 
-      <div className="mt-4 grid items-start gap-4 xl:grid-cols-[420px_minmax(0,1fr)]">
-        <form onSubmit={handleSubmit} className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-700 dark:bg-slate-900">
+      <div className="mt-4 grid min-w-0 items-start gap-4 xl:grid-cols-[minmax(0,420px)_minmax(0,1fr)]">
+        <form onSubmit={handleSubmit} className="w-full min-w-0 overflow-hidden rounded-2xl border border-white/80 bg-white p-5 shadow-lg shadow-slate-900/5 dark:border-slate-700 dark:bg-slate-900 sm:p-6">
           <div className="mb-4">
-            <h3 className="text-base font-semibold text-slate-800 dark:text-slate-100">Tambah Produk</h3>
+            <h3 className="text-base font-semibold text-slate-800 dark:text-slate-100">{editingProductId ? 'Edit Produk' : 'Tambah Produk'}</h3>
             <p className="mt-1 text-[11px] text-slate-500 dark:text-slate-400">Harga beli dan jual dihitung untuk unit yang dipilih.</p>
           </div>
 
-          <div className="grid gap-3">
+          <div className="grid min-w-0 gap-3">
             <label className={labelClassName}>
               Nama produk
               <input type="text" name="name" value={form.name} onChange={handleChange} placeholder="Contoh: Kopi Bubuk" className={fieldClassName} required />
             </label>
 
-            <div className="grid gap-3 sm:grid-cols-2">
+            <div className="grid min-w-0 gap-3 sm:grid-cols-2">
               <label className={labelClassName}>
                 Harga beli (Rp)
                 <input type="number" min="0" step="1" name="purchasePrice" value={form.purchasePrice} onChange={handleChange} placeholder="10000" className={fieldClassName} required />
@@ -387,7 +441,7 @@ export function ModuleContent({ activePage, productList, categories, onAddProduc
               Perkiraan untung kotor: <strong>{new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', maximumFractionDigits: 0 }).format(expectedProfit)}</strong> per {form.unit.toLowerCase()}
             </div>
 
-            <div className="grid gap-3 sm:grid-cols-2">
+            <div className="grid min-w-0 gap-3 sm:grid-cols-2">
               <label className={labelClassName}>
                 Dijual per
                 <select name="unit" value={form.unit} onChange={handleChange} className={fieldClassName}>
@@ -426,7 +480,9 @@ export function ModuleContent({ activePage, productList, categories, onAddProduc
               <span className={labelClassName}>Foto produk</span>
               <div className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-slate-50/70 p-3 dark:border-slate-700 dark:bg-slate-800/50">
                 <div className="grid h-24 w-24 shrink-0 place-items-center overflow-hidden rounded-xl border border-dashed border-blue-200 bg-blue-50 text-xs font-semibold text-blue-700 dark:border-slate-600 dark:bg-slate-800 dark:text-blue-300">
-                  {productImage ? <img src={productImage} alt="Pratinjau produk" className="h-full w-full object-cover" /> : 'Pratinjau'}
+                  {productImage
+                    ? <ProductThumbnail image={productImage} name={form.name || 'Produk'} className="h-full w-full object-cover" />
+                    : <span>Pratinjau</span>}
                 </div>
                 <div className="grid min-w-0 flex-1 gap-2">
                   <input ref={galleryInputRef} type="file" accept="image/*" onChange={handleProductImage} className="hidden" />
@@ -441,13 +497,13 @@ export function ModuleContent({ activePage, productList, categories, onAddProduc
               {imageFeedback && <p role="status" className="text-[11px] text-slate-500 dark:text-slate-400">{imageFeedback}</p>}
             </div>
 
-            <section className="grid gap-3 rounded-2xl border border-blue-100 bg-blue-50/70 p-4 dark:border-slate-700 dark:bg-slate-800/70" aria-labelledby="barcode-title">
+            <section className="grid min-w-0 gap-3 rounded-2xl border border-blue-100 bg-blue-50/70 p-4 dark:border-slate-700 dark:bg-slate-800/70" aria-labelledby="barcode-title">
               <div>
                 <h4 id="barcode-title" className="text-sm font-semibold text-slate-800 dark:text-slate-100">Barcode</h4>
                 <p className="mt-1 text-[11px] text-slate-500 dark:text-slate-400">Ketik kode atau pindai menggunakan kamera.</p>
               </div>
               <input ref={barcodeGalleryInputRef} type="file" accept="image/*" onChange={handleBarcodeImage} className="hidden" />
-              <div className="flex flex-col gap-2 sm:flex-row sm:items-stretch">
+              <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:items-stretch">
                 <div className="relative flex min-w-0 flex-1 items-center rounded-xl border border-slate-200 bg-white px-3 transition focus-within:border-blue-400 focus-within:ring-4 focus-within:ring-blue-100 dark:border-slate-700 dark:bg-slate-900 dark:focus-within:ring-blue-900/40">
                   <input
                     type="text"
@@ -489,11 +545,11 @@ export function ModuleContent({ activePage, productList, categories, onAddProduc
           {formError && <p role="alert" className="mt-3 rounded-xl bg-red-50 px-3 py-2 text-xs text-red-700 dark:bg-red-950/30 dark:text-red-300">{formError}</p>}
 
           <div className="mt-4 flex flex-wrap items-center gap-2">
-            <button type="submit" className="rounded-xl bg-blue-700 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-800">
-              Simpan produk
+            <button type="submit" disabled={isSavingProduct} className="rounded-xl bg-blue-700 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-800 disabled:cursor-wait disabled:opacity-60">
+              {isSavingProduct ? 'Menyimpan...' : editingProductId ? 'Simpan perubahan' : 'Simpan produk'}
             </button>
             <button type="button" onClick={resetForm} className="rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-600 transition hover:border-slate-300 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200">
-              Reset
+              {editingProductId ? 'Batal edit' : 'Reset'}
             </button>
             <button type="button" onClick={onBackToCashier} className="rounded-xl bg-blue-50 px-4 py-2.5 text-sm font-semibold text-blue-700 transition hover:bg-blue-100 dark:bg-slate-800 dark:text-blue-300">
               Kembali ke kasir
@@ -507,17 +563,15 @@ export function ModuleContent({ activePage, productList, categories, onAddProduc
             <span className="text-[10px] text-slate-500 dark:text-slate-400">{productList.length} item</span>
           </div>
 
+          {productActionError && <p role="alert" className="mb-3 rounded-xl bg-red-50 px-3 py-2 text-xs text-red-700 dark:bg-red-950/30 dark:text-red-300">{productActionError}</p>}
+
           <div className="grid gap-3">
             {productList.map((product) => {
               const profit = Number(product.price || 0) - Number(product.purchasePrice || 0)
 
               return (
                 <div key={product.id} className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-slate-50 p-3 dark:border-slate-700 dark:bg-slate-800/50">
-                  <img
-                    src={getProductImageUrl(product.image, { width: 200, height: 200 })}
-                    alt={product.name}
-                    className="h-14 w-14 rounded-xl object-cover"
-                  />
+                  <ProductThumbnail image={product.image} name={product.name} className="h-14 w-14 shrink-0 rounded-xl object-cover" />
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center justify-between gap-3">
                       <p className="truncate text-sm font-semibold text-slate-800 dark:text-slate-100">{product.name}</p>
@@ -535,6 +589,24 @@ export function ModuleContent({ activePage, productList, categories, onAddProduc
                         </span>
                       )}
                     </div>
+                  </div>
+                  <div className="flex shrink-0 flex-col gap-1">
+                    <button
+                      type="button"
+                      onClick={() => startEditingProduct(product)}
+                      className="rounded-lg border border-blue-200 bg-white px-2.5 py-1.5 text-[10px] font-semibold text-blue-700 transition hover:bg-blue-50 dark:border-slate-600 dark:bg-slate-900 dark:text-blue-300 dark:hover:bg-slate-800"
+                      aria-label={`Edit ${product.name}`}
+                    >
+                      Edit
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleDeleteProduct(product)}
+                      className="rounded-lg border border-red-200 bg-white px-2.5 py-1.5 text-[10px] font-semibold text-red-600 transition hover:bg-red-50 dark:border-red-900 dark:bg-slate-900 dark:text-red-300 dark:hover:bg-red-950/30"
+                      aria-label={`Hapus ${product.name}`}
+                    >
+                      Hapus
+                    </button>
                   </div>
                 </div>
               )
