@@ -11,7 +11,7 @@ export function ProductCatalog({ category, search, searchRef, onSetCategory, onS
             ref={searchRef}
             type="search"
             value={search}
-            placeholder="Cari produk (F2)"
+            placeholder="Cari produk"
             onChange={(event) => onSetSearch(event.target.value)}
             className="w-full border-0 bg-transparent text-sm text-slate-700 outline-none placeholder:text-slate-400 dark:text-slate-200"
           />
