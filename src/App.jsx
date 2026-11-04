@@ -11,6 +11,7 @@ import { Toast } from './components/ui/Toast'
 import { Icon } from './assets/icons'
 import { SalesReport } from './components/cashier/SalesReport'
 import { TransactionHistory } from './components/cashier/TransactionHistory'
+import { getSaleLabel, getSalePrice } from './lib/sale'
 import {
   createProduct,
   deleteProduct as deleteProductFromSupabase,
@@ -35,7 +36,6 @@ function App() {
   const [cart, setCart] = useState([])
   const [discount, setDiscount] = useState('')
   const [discountType, setDiscountType] = useState('percent')
-  const [taxEnabled, setTaxEnabled] = useState(true)
   const [paymentMethod, setPaymentMethod] = useState('Tunai')
   const [qrisMode, setQrisMode] = useState('tampil')
   const [isCollapsed, setIsCollapsed] = useState(false)
@@ -97,13 +97,13 @@ function App() {
     ]),
   ], [productList])
 
-  const subtotal = cart.reduce((total, item) => total + item.product.price * item.quantity, 0)
+  const subtotal = cart.reduce((total, item) => total + getSalePrice(item.product, item.saleType) * item.quantity, 0)
   const discountAmount = Math.max(0, Number(discount || 0))
   const discountValue = discountType === 'percent'
     ? Math.min(subtotal, Math.round(subtotal * (Math.min(discountAmount, 100) / 100)))
     : Math.min(subtotal, discountAmount)
-  const tax = taxEnabled ? Math.round((subtotal - discountValue) * 0.11) : 0
-  const total = subtotal - discountValue + tax
+  const tax = 0
+  const total = subtotal - discountValue
   const itemCount = cart.reduce((count, item) => count + item.quantity, 0)
 
   const showMessage = (message) => {
@@ -129,23 +129,39 @@ function App() {
     setQrisMode(mode)
   }
 
-  const addToCart = (product) => {
+  const addToCart = (product, saleType = 'unit') => {
     if (product.stock < 1) {
       showMessage('Stok produk sedang habis.')
       return
     }
 
     setCart((current) => {
-      const existing = current.find((item) => item.product.id === product.id)
+      const soldQuantity = current
+        .filter((item) => item.product.id === product.id)
+        .reduce((sum, item) => sum + item.quantity, 0)
+      const existing = current.find((item) => item.product.id === product.id && item.saleType === saleType)
       if (existing) {
-        if (existing.quantity >= product.stock) {
+        if (soldQuantity >= product.stock) {
           showMessage('Jumlah produk sudah mencapai batas stok.')
           return current
         }
-        return current.map((item) => item.product.id === product.id ? { ...item, quantity: item.quantity + 1 } : item)
+        return current.map((item) => item.product.id === product.id && item.saleType === saleType ? { ...item, quantity: item.quantity + 1 } : item)
       }
-      return [...current, { product, quantity: 1 }]
+      if (soldQuantity >= product.stock) {
+        showMessage('Jumlah produk sudah mencapai batas stok.')
+        return current
+      }
+      return [...current, { product, quantity: 1, saleType }]
     })
+  }
+
+  const addBarcodeToCart = (barcode) => {
+    const product = productList.find((item) => item.barcode?.trim() === barcode.trim())
+    if (!product) {
+      showMessage(`Barcode ${barcode} tidak ditemukan.`)
+      return
+    }
+    addToCart(product)
   }
 
   const addProduct = async (newProduct) => {
@@ -181,73 +197,60 @@ function App() {
       : 'Produk berhasil dihapus.')
   }
 
-  const completeTransaction = async () => {
+  const completeTransaction = async (cashReceived) => {
     if (!cart.length || isSavingTransaction) return
+    if (paymentMethod === 'Tunai' && (!Number.isSafeInteger(cashReceived) || cashReceived < total)) {
+      showMessage('Jumlah uang yang diterima kurang dari total pembayaran.')
+      return
+    }
 
     const transactionNumber = `TRX-${Date.now()}`
     setIsSavingTransaction(true)
     try {
+      const savedItems = cart.map(({ product, quantity, saleType = 'unit' }) => {
+        const unitPrice = getSalePrice(product, saleType)
+        const label = getSaleLabel(product, saleType)
+        return {
+          product_id: product.id,
+          product_name: saleType === 'bulk' ? `${product.name} (${label})` : product.name,
+          quantity,
+          unit_price: unitPrice,
+          purchase_price: saleType === 'bulk' ? null : product.purchasePrice ?? null,
+          line_total: unitPrice * quantity,
+          line_profit: saleType === 'bulk' || product.purchasePrice == null
+            ? null
+            : (unitPrice - product.purchasePrice) * quantity,
+        }
+      })
+
       if (supabase) {
         await saveSale({
           transactionNumber,
           paymentMethod,
           discountType,
           discountValue: discountAmount,
-          taxEnabled,
+          taxEnabled: false,
           items: cart,
         })
-        const createdAt = new Date().toISOString()
-        const savedTransaction = {
-          id: transactionNumber,
-          transaction_number: transactionNumber,
-          payment_method: selectedPaymentMethod,
-          subtotal,
-          discount_amount: discountValue,
-          tax_amount: tax,
-          total_amount: total,
-          created_at: createdAt,
-          items: cart.map(({ product, quantity }) => ({
-            product_id: product.id,
-            product_name: product.name,
-            quantity,
-            unit_price: product.price,
-            purchase_price: product.purchasePrice ?? null,
-            line_total: product.price * quantity,
-            line_profit: product.purchasePrice == null ? null : (product.price - product.purchasePrice) * quantity,
-          })),
-        }
-        setTransactions((current) => [savedTransaction, ...current])
-        setProductList((current) => current.map((product) => {
-          const soldItem = cart.find((item) => item.product.id === product.id)
-          return soldItem ? { ...product, stock: product.stock - soldItem.quantity } : product
-        }))
-      } else {
-        const createdAt = new Date().toISOString()
-        const savedTransaction = {
-          id: transactionNumber,
-          transaction_number: transactionNumber,
-
-          payment_method: selectedPaymentMethod,
-          subtotal,          discount_amount: discountValue,
-          tax_amount: tax,
-          total_amount: total,
-          created_at: createdAt,
-          items: cart.map(({ product, quantity }) => ({
-            product_id: product.id,
-            product_name: product.name,
-            quantity,
-            unit_price: product.price,
-            purchase_price: product.purchasePrice ?? null,
-            line_total: product.price * quantity,
-            line_profit: product.purchasePrice == null ? null : (product.price - product.purchasePrice) * quantity,
-          })),
-        }
-        setTransactions((current) => [savedTransaction, ...current])
-        setProductList((current) => current.map((product) => {
-          const soldItem = cart.find((item) => item.product.id === product.id)
-          return soldItem ? { ...product, stock: product.stock - soldItem.quantity } : product
-        }))
       }
+      const savedTransaction = {
+        id: transactionNumber,
+        transaction_number: transactionNumber,
+        payment_method: selectedPaymentMethod,
+        subtotal,
+        discount_amount: discountValue,
+        tax_amount: tax,
+        total_amount: total,
+        created_at: new Date().toISOString(),
+        items: savedItems,
+      }
+      setTransactions((current) => [savedTransaction, ...current])
+      setProductList((current) => current.map((product) => {
+        const soldQuantity = cart
+          .filter((item) => item.product.id === product.id)
+          .reduce((sum, item) => sum + item.quantity, 0)
+        return soldQuantity ? { ...product, stock: product.stock - soldQuantity } : product
+      }))
 
       setCart([])
       setDiscount('')
@@ -256,6 +259,7 @@ function App() {
         transactionNumber,
         paymentMethod: selectedPaymentMethod,
         total,
+        change: paymentMethod === 'Tunai' ? cashReceived - total : null,
       })
       if (supabase) {
         try {
@@ -278,11 +282,7 @@ function App() {
   }
 
   const handleOpenCheckout = () => {
-    if (paymentMethod === 'Tunai') {
-      completeTransaction()
-      return
-    }
-    setQrisMode('pilih')
+    if (paymentMethod === 'QRIS') setQrisMode('pilih')
     setShowCheckout(true)
   }
 
@@ -362,6 +362,7 @@ function App() {
                     visibleProducts={visibleProducts}
                     categories={productCategories}
                     onAddToCart={addToCart}
+                    onScanBarcode={addBarcodeToCart}
                     onManageProducts={() => setActivePage('Barang & Stok')}
                   />
                 </div>
@@ -373,14 +374,11 @@ function App() {
                   onSetDiscount={setDiscount}
                   discountType={discountType}
                   onSetDiscountType={setDiscountType}
-                  taxEnabled={taxEnabled}
-                  onToggleTax={() => setTaxEnabled((value) => !value)}
                   paymentMethod={paymentMethod}
                   onSelectPayment={handleSelectPayment}
                   itemCount={itemCount}
                   subtotal={subtotal}
                   discountValue={discountValue}
-                  tax={tax}
                   total={total}
                   isSaving={isSavingTransaction}
                   payButtonRef={payButtonRef}
@@ -441,6 +439,12 @@ function App() {
                   <span className="text-slate-500 dark:text-slate-400">Total</span>
                   <strong className="text-blue-700 dark:text-blue-300">{new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', maximumFractionDigits: 0 }).format(successTransaction.total)}</strong>
                 </div>
+                {successTransaction.change !== null && (
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="text-slate-500 dark:text-slate-400">Uang kembalian</span>
+                    <strong className="text-emerald-700 dark:text-emerald-300">{new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', maximumFractionDigits: 0 }).format(successTransaction.change)}</strong>
+                  </div>
+                )}
               </div>
               <button
                 type="button"

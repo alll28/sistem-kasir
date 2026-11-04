@@ -6,8 +6,18 @@ export function CheckoutModal({ itemCount, paymentMethod, total, qrisMode, onSel
   const [cameraError, setCameraError] = useState('')
   const [cameraResult, setCameraResult] = useState('')
   const [scannerReady, setScannerReady] = useState(false)
+  const [cashReceived, setCashReceived] = useState('')
 
   const isQrisMode = paymentMethod === 'QRIS' || paymentMethod.startsWith('QRIS ')
+  const cashReceivedAmount = cashReceived === '' ? 0 : Number(cashReceived)
+  const validCashReceived = Number.isSafeInteger(cashReceivedAmount)
+  const change = validCashReceived ? Math.max(0, cashReceivedAmount - total) : 0
+  const insufficientCash = !isQrisMode && (!validCashReceived || cashReceivedAmount < total)
+  const formatCurrency = (amount) => new Intl.NumberFormat('id-ID', {
+    style: 'currency',
+    currency: 'IDR',
+    maximumFractionDigits: 0,
+  }).format(amount)
 
   useEffect(() => {
     if (!isQrisMode || qrisMode !== 'tampil') return undefined
@@ -141,6 +151,42 @@ export function CheckoutModal({ itemCount, paymentMethod, total, qrisMode, onSel
               <p className="mt-3 text-xs text-blue-600 dark:text-blue-300">Kamera aktif dan siap dipindai.</p>
             )}
           </div>
+        ) : !isQrisMode ? (
+          <div className="mt-5 space-y-4 text-left">
+            <div className="rounded-xl bg-slate-50 px-4 py-3 dark:bg-slate-800/80">
+              <div className="flex items-center justify-between text-sm text-slate-500 dark:text-slate-400">
+                <span>Total pembayaran</span>
+                <strong className="text-lg font-bold text-blue-700 dark:text-blue-300">{formatCurrency(total)}</strong>
+              </div>
+            </div>
+
+            <label htmlFor="cash-received" className="block text-sm font-semibold text-slate-700 dark:text-slate-200">
+              Uang diterima
+            </label>
+            <div className="relative">
+              <span className="absolute inset-y-0 left-3 flex items-center text-sm font-semibold text-slate-500 dark:text-slate-400">Rp</span>
+              <input
+                id="cash-received"
+                aria-label="Jumlah uang diterima"
+                type="text"
+                inputMode="numeric"
+                autoFocus
+                value={cashReceived.replace(/\B(?=(\d{3})+(?!\d))/g, '.')}
+                onChange={(event) => setCashReceived(event.target.value.replace(/\D/g, ''))}
+                placeholder="Masukkan jumlah uang"
+                className="h-12 w-full rounded-xl border border-slate-200 bg-white pl-10 pr-3 text-base font-semibold text-slate-800 outline-none transition focus:border-blue-400 focus:ring-2 focus:ring-blue-100 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:focus:ring-blue-950"
+              />
+            </div>
+
+            <div className="flex items-center justify-between rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 dark:border-emerald-900 dark:bg-emerald-950/30">
+              <span className="text-sm font-medium text-emerald-800 dark:text-emerald-300">Uang kembalian</span>
+              <strong className="text-lg font-bold text-emerald-800 dark:text-emerald-300">{formatCurrency(change)}</strong>
+            </div>
+
+            {insufficientCash && cashReceived !== '' && (
+              <p className="text-xs text-red-600 dark:text-red-300">Masukkan jumlah uang yang valid dan tidak kurang dari total pembayaran.</p>
+            )}
+          </div>
         ) : (
           <div className="mt-5 space-y-4">
             <div className="mx-auto flex w-full max-w-[440px] items-center justify-center rounded-2xl border border-slate-200 bg-white p-2 shadow-sm dark:border-slate-700">
@@ -168,7 +214,17 @@ export function CheckoutModal({ itemCount, paymentMethod, total, qrisMode, onSel
           </div>
         )}
 
-        {!isQrisMode || (qrisMode !== 'tampil' && qrisMode !== 'pilih') ? (
+        {!isQrisMode ? (
+          <>
+            <button type="button" disabled={isSaving || !itemCount || insufficientCash} className="mt-5 flex h-10 w-full items-center justify-center gap-2 rounded-xl bg-blue-700 text-sm font-semibold text-white transition hover:bg-blue-800 disabled:cursor-not-allowed disabled:opacity-60" onClick={() => onComplete(cashReceivedAmount)}>
+              <Icon name="check" size={17} /> {isSaving ? 'Menyimpan transaksi...' : insufficientCash ? 'Uang pembayaran belum cukup' : 'Konfirmasi & selesaikan'}
+            </button>
+
+            <button type="button" disabled={isSaving} className="mt-2 flex h-10 w-full items-center justify-center rounded-xl border border-slate-200 bg-white text-sm font-semibold text-slate-600 transition hover:bg-slate-50 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300" onClick={onClose}>
+              Kembali ke keranjang
+            </button>
+          </>
+        ) : qrisMode !== 'tampil' && qrisMode !== 'pilih' ? (
           <>
             <button type="button" disabled={isSaving || !itemCount} className="mt-5 flex h-10 w-full items-center justify-center gap-2 rounded-xl bg-blue-700 text-sm font-semibold text-white transition hover:bg-blue-800 disabled:cursor-wait disabled:opacity-60" onClick={onComplete}>
               <Icon name="check" size={17} /> {isSaving ? 'Menyimpan transaksi...' : itemCount ? isQrisMode ? 'Selesai' : 'Konfirmasi & selesaikan' : 'Tambahkan item terlebih dahulu'}

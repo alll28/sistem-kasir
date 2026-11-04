@@ -9,6 +9,8 @@ const defaultForm = {
   newCategory: '',
   purchasePrice: '',
   price: '',
+  bulkPrice: '',
+  bulkUnit: '',
   unit: 'Satuan',
   stock: '',
   description: '',
@@ -17,6 +19,7 @@ const defaultForm = {
 
 const fieldClassName = 'block w-full min-w-0 max-w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm text-slate-700 outline-none transition focus:border-blue-400 focus:bg-white focus:ring-4 focus:ring-blue-100 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 dark:focus:border-blue-500 dark:focus:bg-slate-800 dark:focus:ring-blue-900/40'
 const labelClassName = 'grid min-w-0 gap-1.5 text-[11px] font-medium text-slate-600 dark:text-slate-300'
+const productsPerPage = 20
 
 function readImageFile(file) {
   return new Promise((resolve, reject) => {
@@ -42,6 +45,8 @@ export function ModuleContent({ activePage, productList, categories, onAddProduc
   const [formError, setFormError] = useState('')
   const [productActionError, setProductActionError] = useState('')
   const [editingProductId, setEditingProductId] = useState('')
+  const [isProductFormOpen, setIsProductFormOpen] = useState(false)
+  const [productPage, setProductPage] = useState(0)
   const [isSavingProduct, setIsSavingProduct] = useState(false)
   const [imageFeedback, setImageFeedback] = useState('')
   const [barcodeFeedback, setBarcodeFeedback] = useState('')
@@ -57,7 +62,10 @@ export function ModuleContent({ activePage, productList, categories, onAddProduc
 
   const summary = useMemo(() => {
     const totalStock = productList.reduce((sum, product) => sum + Number(product.stock || 0), 0)
-    const lowStock = productList.filter((product) => Number(product.stock || 0) <= 5).length
+    const lowStock = productList.filter((product) => {
+      const stock = Number(product.stock || 0)
+      return stock > 0 && stock <= 10
+    }).length
 
     return {
       totalProducts: productList.length,
@@ -65,6 +73,9 @@ export function ModuleContent({ activePage, productList, categories, onAddProduc
       lowStock,
     }
   }, [productList])
+  const pageCount = Math.ceil(productList.length / productsPerPage)
+  const currentPage = Math.min(productPage, Math.max(0, pageCount - 1))
+  const visibleProducts = productList.slice(currentPage * productsPerPage, (currentPage + 1) * productsPerPage)
 
   const expectedProfit = Number(form.price || 0) - Number(form.purchasePrice || 0)
 
@@ -252,6 +263,13 @@ export function ModuleContent({ activePage, productList, categories, onAddProduc
     setBarcodeFeedback('')
     setShowBarcodePhotoOptions(false)
     setEditingProductId('')
+    setIsProductFormOpen(false)
+    setCameraMode('')
+  }
+
+  const openNewProductForm = () => {
+    resetForm()
+    setIsProductFormOpen(true)
   }
 
   const startEditingProduct = (product) => {
@@ -262,7 +280,9 @@ export function ModuleContent({ activePage, productList, categories, onAddProduc
       newCategory: '',
       purchasePrice: product.purchasePrice ?? '',
       price: product.price,
-      unit: product.unit || 'Satuan',
+      bulkPrice: product.bulkPrice ?? '',
+      bulkUnit: product.bulkUnit || '',
+      unit: 'Satuan',
       stock: product.stock,
       description: product.description || '',
       barcode: product.barcode || '',
@@ -274,6 +294,7 @@ export function ModuleContent({ activePage, productList, categories, onAddProduc
     setImageFeedback('')
     setBarcodeFeedback('')
     setShowBarcodePhotoOptions(false)
+    setIsProductFormOpen(true)
   }
 
   const handleSubmit = async (event) => {
@@ -282,6 +303,7 @@ export function ModuleContent({ activePage, productList, categories, onAddProduc
     const name = form.name.trim()
     const purchasePrice = Number(form.purchasePrice)
     const price = Number(form.price)
+    const bulkPrice = form.bulkPrice === '' ? null : Number(form.bulkPrice)
     const stock = Number(form.stock)
     const productCategory = form.category === '__new_category__' ? form.newCategory.trim() : form.category
     const barcode = form.barcode.trim()
@@ -300,6 +322,14 @@ export function ModuleContent({ activePage, productList, categories, onAddProduc
     }
     if (!Number.isFinite(price) || price <= 0) {
       setFormError('Harga jual wajib lebih dari Rp0.')
+      return
+    }
+    if (form.bulkUnit && (!Number.isFinite(bulkPrice) || bulkPrice <= 0)) {
+      setFormError('Harga perbanyakan wajib lebih dari Rp0.')
+      return
+    }
+    if (!form.bulkUnit && form.bulkPrice !== '') {
+      setFormError('Pilih jenis perbanyakan untuk harga tersebut.')
       return
     }
     if (!Number.isFinite(stock) || stock < 0 || form.stock === '') {
@@ -329,7 +359,9 @@ export function ModuleContent({ activePage, productList, categories, onAddProduc
         category: productCategory,
         purchasePrice,
         price,
-        unit: form.unit,
+        bulkPrice: form.bulkUnit ? bulkPrice : null,
+        bulkUnit: form.bulkUnit || null,
+        unit: 'Satuan',
         stock,
         image: productImage,
         description: form.description.trim(),
@@ -409,15 +441,22 @@ export function ModuleContent({ activePage, productList, categories, onAddProduc
         <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-700 dark:bg-slate-900">
           <span className="text-[11px] text-slate-500 dark:text-slate-400">Stok menipis</span>
           <strong className="mt-2 block text-3xl font-bold text-blue-700 dark:text-blue-300">{summary.lowStock}</strong>
-          <small className="mt-1 block text-[10px] text-slate-400">Produk dengan stok maksimal 5</small>
+          <small className="mt-1 block text-[10px] text-slate-400">Produk dengan stok 1–10</small>
         </div>
       </div>
 
-      <div className="mt-4 grid min-w-0 items-start gap-4 xl:grid-cols-[minmax(0,420px)_minmax(0,1fr)]">
-        <form onSubmit={handleSubmit} className="w-full min-w-0 overflow-hidden rounded-2xl border border-white/80 bg-white p-5 shadow-lg shadow-slate-900/5 dark:border-slate-700 dark:bg-slate-900 sm:p-6">
-          <div className="mb-4">
-            <h3 className="text-base font-semibold text-slate-800 dark:text-slate-100">{editingProductId ? 'Edit Produk' : 'Tambah Produk'}</h3>
-            <p className="mt-1 text-[11px] text-slate-500 dark:text-slate-400">Harga beli dan jual dihitung untuk unit yang dipilih.</p>
+      <div className="mt-4">
+        {isProductFormOpen && (
+          <div className="fixed inset-0 z-50 grid place-items-center bg-slate-950/60 p-4 backdrop-blur-sm" role="dialog" aria-modal="true" aria-labelledby="product-form-title">
+            <form onSubmit={handleSubmit} className="max-h-[90vh] w-full max-w-2xl min-w-0 overflow-y-auto rounded-2xl border border-white/80 bg-white p-5 shadow-2xl dark:border-slate-700 dark:bg-slate-900 sm:p-6">
+          <div className="mb-4 flex items-start justify-between gap-4">
+            <div>
+            <h3 id="product-form-title" className="text-base font-semibold text-slate-800 dark:text-slate-100">{editingProductId ? 'Edit Produk' : 'Tambah Produk'}</h3>
+            <p className="mt-1 text-[11px] text-slate-500 dark:text-slate-400">Atur harga jual satuan dan harga khusus pembelian beberapa barang.</p>
+            </div>
+            <button type="button" disabled={isSavingProduct} onClick={resetForm} aria-label="Tutup formulir produk" className="grid h-8 w-8 shrink-0 place-items-center rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-100 disabled:opacity-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800">
+              <Icon name="close" size={16} />
+            </button>
           </div>
 
           <div className="grid min-w-0 gap-3">
@@ -432,28 +471,54 @@ export function ModuleContent({ activePage, productList, categories, onAddProduc
                 <input type="number" min="0" step="1" name="purchasePrice" value={form.purchasePrice} onChange={handleChange} placeholder="10000" className={fieldClassName} required />
               </label>
               <label className={labelClassName}>
-                Harga jual (Rp)
-                <input type="number" min="1" step="1" name="price" value={form.price} onChange={handleChange} placeholder="15000" className={fieldClassName} required />
+                Jumlah stok
+                <input type="number" min="0" step="1" name="stock" value={form.stock} onChange={handleChange} placeholder="25" className={fieldClassName} required />
               </label>
-            </div>
-
-            <div className={`rounded-xl px-3 py-2 text-xs ${expectedProfit < 0 ? 'bg-red-50 text-red-700 dark:bg-red-950/30 dark:text-red-300' : 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-300'}`}>
-              Perkiraan untung kotor: <strong>{new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', maximumFractionDigits: 0 }).format(expectedProfit)}</strong> per {form.unit.toLowerCase()}
             </div>
 
             <div className="grid min-w-0 gap-3 sm:grid-cols-2">
               <label className={labelClassName}>
-                Dijual per
-                <select name="unit" value={form.unit} onChange={handleChange} className={fieldClassName}>
-                  <option value="Satuan">Satuan</option>
-                  <option value="Pack">Pack</option>
+                Harga jual per satuan (Rp)
+                <input type="number" min="1" step="1" name="price" value={form.price} onChange={handleChange} placeholder="15000" className={fieldClassName} required />
+              </label>
+              <div className="grid min-w-0 gap-1.5">
+                <label htmlFor="bulk-unit" className={labelClassName}>Harga jual banyak</label>
+                <select
+                  id="bulk-unit"
+                  name="bulkUnit"
+                  value={form.bulkUnit}
+                  onChange={(event) => {
+                    setForm((current) => ({ ...current, bulkUnit: event.target.value, bulkPrice: '' }))
+                    setFormError('')
+                  }}
+                  className={fieldClassName}
+                >
+                  <option value="">Pilih jenis harga banyak</option>
                   <option value="Lusin">Lusin</option>
+                  <option value="Setengah Lusin">Setengah Lusin</option>
+                  <option value="Kodi">Kodi</option>
+                  <option value="Setengah Kodi">Setengah Kodi</option>
+                  <option value="Pack">Pack</option>
+                  <option value="Kotak">Kotak</option>
                 </select>
-              </label>
-              <label className={labelClassName}>
-                Jumlah stok
-                <input type="number" min="0" step="1" name="stock" value={form.stock} onChange={handleChange} placeholder="25" className={fieldClassName} required />
-              </label>
+                <input
+                  type="number"
+                  min="1"
+                  step="1"
+                  name="bulkPrice"
+                  value={form.bulkPrice}
+                  onChange={handleChange}
+                  placeholder={form.bulkUnit ? `Harga ${form.bulkUnit}` : 'Pilih jenis harga banyak dahulu'}
+                  aria-label="Harga jual banyak dalam rupiah"
+                  className={fieldClassName}
+                  disabled={!form.bulkUnit}
+                  required={Boolean(form.bulkUnit)}
+                />
+              </div>
+            </div>
+
+            <div className={`rounded-xl px-3 py-2 text-xs ${expectedProfit < 0 ? 'bg-red-50 text-red-700 dark:bg-red-950/30 dark:text-red-300' : 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-300'}`}>
+              Perkiraan untung kotor: <strong>{new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', maximumFractionDigits: 0 }).format(expectedProfit)}</strong> per satuan
             </div>
 
             <label className={labelClassName}>
@@ -548,41 +613,55 @@ export function ModuleContent({ activePage, productList, categories, onAddProduc
             <button type="submit" disabled={isSavingProduct} className="rounded-xl bg-blue-700 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-800 disabled:cursor-wait disabled:opacity-60">
               {isSavingProduct ? 'Menyimpan...' : editingProductId ? 'Simpan perubahan' : 'Simpan produk'}
             </button>
-            <button type="button" onClick={resetForm} className="rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-600 transition hover:border-slate-300 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200">
-              {editingProductId ? 'Batal edit' : 'Reset'}
-            </button>
-            <button type="button" onClick={onBackToCashier} className="rounded-xl bg-blue-50 px-4 py-2.5 text-sm font-semibold text-blue-700 transition hover:bg-blue-100 dark:bg-slate-800 dark:text-blue-300">
-              Kembali ke kasir
+            <button type="button" disabled={isSavingProduct} onClick={resetForm} className="rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-600 transition hover:border-slate-300 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200">
+              Batal
             </button>
           </div>
-        </form>
+            </form>
+          </div>
+        )}
 
         <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-700 dark:bg-slate-900">
           <div className="mb-4 flex items-center justify-between gap-3">
             <h3 className="text-base font-semibold text-slate-800 dark:text-slate-100">Daftar Produk</h3>
-            <span className="text-[10px] text-slate-500 dark:text-slate-400">{productList.length} item</span>
+            <div className="flex items-center gap-3">
+              <span className="text-[10px] text-slate-500 dark:text-slate-400">{productList.length} item</span>
+              <button type="button" onClick={openNewProductForm} className="rounded-xl bg-blue-700 px-3 py-2 text-xs font-semibold text-white shadow-sm transition hover:bg-blue-800">
+                + Tambah produk
+              </button>
+            </div>
           </div>
 
           {productActionError && <p role="alert" className="mb-3 rounded-xl bg-red-50 px-3 py-2 text-xs text-red-700 dark:bg-red-950/30 dark:text-red-300">{productActionError}</p>}
 
-          <div className="grid gap-3">
-            {productList.map((product) => {
+          <div className="grid gap-3 md:grid-cols-2">
+            {visibleProducts.map((product) => {
               const profit = Number(product.price || 0) - Number(product.purchasePrice || 0)
+              const outOfStock = Number(product.stock) <= 0
+              const lowStock = Number(product.stock) > 0 && Number(product.stock) <= 10
 
               return (
-                <div key={product.id} className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-slate-50 p-3 dark:border-slate-700 dark:bg-slate-800/50">
-                  <ProductThumbnail image={product.image} name={product.name} className="h-14 w-14 shrink-0 rounded-xl object-cover" />
+                <div key={product.id} className={`flex items-center gap-3 rounded-2xl border p-3 ${outOfStock ? 'border-slate-200 bg-slate-100 opacity-70 dark:border-slate-700 dark:bg-slate-800' : lowStock ? 'border-red-200 bg-red-50 dark:border-red-900 dark:bg-red-950/30' : 'border-slate-200 bg-slate-50 dark:border-slate-700 dark:bg-slate-800/50'}`}>
+                  <ProductThumbnail image={product.image} name={product.name} className={`h-14 w-14 shrink-0 rounded-xl object-cover ${outOfStock ? 'grayscale' : ''}`} />
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center justify-between gap-3">
-                      <p className="truncate text-sm font-semibold text-slate-800 dark:text-slate-100">{product.name}</p>
+                      <p className={`truncate text-sm font-semibold ${outOfStock ? 'text-slate-500 dark:text-slate-400' : 'text-slate-800 dark:text-slate-100'}`}>{product.name}</p>
                       <span className="rounded-full bg-sky-100 px-2 py-0.5 text-[9px] font-medium text-sky-700 dark:bg-sky-900/30 dark:text-sky-300">{product.category}</span>
                     </div>
                     <div className="mt-1 flex flex-wrap items-center justify-between gap-x-3 gap-y-1 text-[11px] text-slate-500 dark:text-slate-400">
                       <span>{product.id}{product.barcode ? ` · Barcode ${product.barcode}` : ''}</span>
-                      <span className={Number(product.stock) <= 5 ? 'font-semibold text-red-500' : ''}>Stok: {product.stock} {product.unit || 'Satuan'}</span>
+                      <span className={outOfStock ? 'rounded-full bg-slate-200 px-2 py-0.5 font-semibold text-slate-600 dark:bg-slate-700 dark:text-slate-300' : lowStock ? 'rounded-full bg-red-50 px-2 py-0.5 font-semibold text-red-600 dark:bg-red-950/40 dark:text-red-300' : ''}>
+                        {outOfStock ? 'Stok habis' : lowStock ? `Stok menipis: ${product.stock} ${product.unit || 'Satuan'}` : `Stok: ${product.stock} ${product.unit || 'Satuan'}`}
+                      </span>
                     </div>
                     <div className="mt-1 flex flex-wrap gap-x-3 text-[11px]">
                       <span className="font-semibold text-blue-700 dark:text-blue-300">{new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', maximumFractionDigits: 0 }).format(product.price)}</span>
+                      <span className="text-slate-500 dark:text-slate-400">per satuan</span>
+                      {product.bulkPrice != null && product.bulkUnit && (
+                        <span className="font-semibold text-emerald-700 dark:text-emerald-300">
+                          {product.bulkUnit}: {new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', maximumFractionDigits: 0 }).format(product.bulkPrice)}
+                        </span>
+                      )}
                       {product.purchasePrice !== undefined && product.purchasePrice !== null && (
                         <span className={profit < 0 ? 'text-red-600 dark:text-red-300' : 'text-emerald-700 dark:text-emerald-300'}>
                           Untung: {new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', maximumFractionDigits: 0 }).format(profit)}
@@ -612,6 +691,34 @@ export function ModuleContent({ activePage, productList, categories, onAddProduc
               )
             })}
           </div>
+          {pageCount > 1 && (
+            <nav className="mt-5 flex flex-wrap items-center justify-between gap-3 border-t border-slate-100 pt-4 dark:border-slate-800" aria-label="Halaman daftar produk">
+              <span className="text-xs text-slate-500 dark:text-slate-400">
+                Menampilkan {currentPage * productsPerPage + 1}–{Math.min((currentPage + 1) * productsPerPage, productList.length)} dari {productList.length} produk
+              </span>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  disabled={currentPage === 0}
+                  onClick={() => setProductPage(Math.max(0, currentPage - 1))}
+                  className="rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-600 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
+                >
+                  Sebelumnya
+                </button>
+                <span className="px-2 text-xs font-medium text-slate-600 dark:text-slate-300">
+                  {currentPage + 1} / {pageCount}
+                </span>
+                <button
+                  type="button"
+                  disabled={currentPage >= pageCount - 1}
+                  onClick={() => setProductPage(Math.min(pageCount - 1, currentPage + 1))}
+                  className="rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-600 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
+                >
+                  Berikutnya
+                </button>
+              </div>
+            </nav>
+          )}
         </div>
       </div>
       {cameraMode && (

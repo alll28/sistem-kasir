@@ -20,7 +20,7 @@ export function Sidebar({ activePage, isCollapsed, isDark, isMobileOpen, onToggl
 
         {!isCollapsed && (
           <div className="min-w-0 flex-1 leading-tight">
-            <div className="text-sm font-bold tracking-tight text-slate-900 dark:text-white">Pos System</div>
+            <div className="text-sm font-bold tracking-tight text-slate-900 dark:text-white">ATK & ACCESSORIES BANG IZ</div>
             <div className="mt-0.5 text-[10px] font-medium uppercase tracking-[0.16em] text-slate-400 dark:text-slate-500">Sistem kasir</div>
           </div>
         )}

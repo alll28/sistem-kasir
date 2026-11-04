@@ -13,6 +13,10 @@ create table if not exists public.products (
   created_at timestamptz not null default now()
 );
 
+alter table public.products
+  add column if not exists bulk_price bigint check (bulk_price > 0),
+  add column if not exists bulk_unit text;
+
 create table if not exists public.transactions (
   id uuid primary key default gen_random_uuid(),
   transaction_number text not null unique,
@@ -139,12 +143,14 @@ drop policy if exists "Anyone can delete product images" on storage.objects;
 create policy "Anyone can delete product images"
   on storage.objects for delete to anon using (bucket_id = 'product-images');
 
+drop function if exists public.complete_sale(text, text, text, bigint, boolean, jsonb);
 create or replace function public.complete_sale(
   p_transaction_number text,
   p_payment_method text,
   p_discount_type text,
   p_discount_value bigint,
   p_tax_enabled boolean,
+  p_pricing_version integer,
   p_items jsonb
 )
 returns uuid
@@ -158,11 +164,18 @@ declare
   v_item jsonb;
   v_product public.products%rowtype;
   v_quantity integer;
+  v_sale_type text;
+  v_unit_price bigint;
+  v_purchase_price bigint;
+  v_sale_label text;
   v_subtotal bigint := 0;
   v_discount_amount bigint := 0;
   v_tax_amount bigint := 0;
   v_total bigint := 0;
 begin
+  if p_pricing_version <> 2 then
+    raise exception 'Versi perhitungan harga tidak didukung.';
+  end if;
   if p_payment_method not in ('Tunai', 'QRIS') then
     raise exception 'Metode pembayaran tidak valid.';
   end if;
@@ -175,17 +188,21 @@ begin
   if exists (
     select 1
     from jsonb_array_elements(p_items) as entry(value)
-    group by entry.value ->> 'product_id'
+    group by entry.value ->> 'product_id', coalesce(entry.value ->> 'sale_type', 'unit')
     having count(*) > 1
   ) then
-    raise exception 'Produk yang sama tidak boleh muncul lebih dari satu kali dalam keranjang.';
+    raise exception 'Jenis produk yang sama tidak boleh muncul lebih dari satu kali dalam keranjang.';
   end if;
 
   for v_item in select value from jsonb_array_elements(p_items)
   loop
     v_quantity := (v_item ->> 'quantity')::integer;
+    v_sale_type := coalesce(v_item ->> 'sale_type', 'unit');
     if v_quantity <= 0 then
       raise exception 'Jumlah barang tidak valid.';
+    end if;
+    if v_sale_type not in ('unit', 'bulk') then
+      raise exception 'Jenis harga produk tidak valid.';
     end if;
 
     select * into v_product
@@ -196,11 +213,19 @@ begin
     if not found then
       raise exception 'Produk % tidak ditemukan.', v_item ->> 'product_id';
     end if;
-    if v_product.stock < v_quantity then
+    if v_sale_type = 'bulk' and (v_product.bulk_price is null or v_product.bulk_unit is null) then
+      raise exception 'Harga perbanyakan produk % belum diatur.', v_product.name;
+    end if;
+    if v_product.stock < (
+      select sum((entry.value ->> 'quantity')::integer)
+      from jsonb_array_elements(p_items) as entry(value)
+      where entry.value ->> 'product_id' = v_product.id
+    ) then
       raise exception 'Stok % tidak mencukupi. Stok tersedia: %.', v_product.name, v_product.stock;
     end if;
 
-    v_subtotal := v_subtotal + (v_product.price * v_quantity);
+    v_unit_price := case when v_sale_type = 'bulk' then v_product.bulk_price else v_product.price end;
+    v_subtotal := v_subtotal + (v_unit_price * v_quantity);
   end loop;
 
   if p_discount_type = 'percent' then
@@ -226,10 +251,15 @@ begin
   for v_item in select value from jsonb_array_elements(p_items)
   loop
     v_quantity := (v_item ->> 'quantity')::integer;
+    v_sale_type := coalesce(v_item ->> 'sale_type', 'unit');
     select * into v_product
     from public.products
     where id = v_item ->> 'product_id'
     for update;
+
+    v_unit_price := case when v_sale_type = 'bulk' then v_product.bulk_price else v_product.price end;
+    v_purchase_price := case when v_sale_type = 'bulk' then null else v_product.purchase_price end;
+    v_sale_label := case when v_sale_type = 'bulk' then v_product.bulk_unit else 'Satuan' end;
 
     update public.products set stock = stock - v_quantity where id = v_product.id;
 
@@ -238,12 +268,13 @@ begin
       unit_price, purchase_price, line_total, line_profit
     )
     values (
-      v_transaction_id, v_product.id, v_product.name, v_quantity,
-      v_product.price, v_product.purchase_price,
-      v_product.price * v_quantity,
+      v_transaction_id, v_product.id,
+      case when v_sale_type = 'bulk' then v_product.name || ' (' || v_sale_label || ')' else v_product.name end,
+      v_quantity, v_unit_price, v_purchase_price,
+      v_unit_price * v_quantity,
       case
-        when v_product.purchase_price is null then null
-        else (v_product.price - v_product.purchase_price) * v_quantity
+        when v_purchase_price is null then null
+        else (v_unit_price - v_purchase_price) * v_quantity
       end
     );
   end loop;
@@ -252,6 +283,6 @@ begin
 end;
 $$;
 
-revoke all on function public.complete_sale(text, text, text, bigint, boolean, jsonb) from public, anon;
-grant execute on function public.complete_sale(text, text, text, bigint, boolean, jsonb) to authenticated;
-grant execute on function public.complete_sale(text, text, text, bigint, boolean, jsonb) to anon;
+revoke all on function public.complete_sale(text, text, text, bigint, boolean, integer, jsonb) from public, anon;
+grant execute on function public.complete_sale(text, text, text, bigint, boolean, integer, jsonb) to authenticated;
+grant execute on function public.complete_sale(text, text, text, bigint, boolean, integer, jsonb) to anon;

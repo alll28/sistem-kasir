@@ -1,12 +1,24 @@
 import { Icon } from '../../assets/icons'
+import { getSaleLabel, getSalePrice } from '../../lib/sale'
 
-export function PaymentPanel({ cart, onSetCart, discount, onSetDiscount, discountType, onSetDiscountType, taxEnabled, onToggleTax, paymentMethod, onSelectPayment, itemCount, subtotal, discountValue, tax, total, isSaving, payButtonRef, onOpenCheckout, onClearCart, discountRef }) {
-  const updateQuantity = (productId, amount) => {
-    onSetCart((current) => current
-      .map((item) => item.product.id === productId
-        ? { ...item, quantity: Math.min(item.product.stock, item.quantity + amount) }
-        : item)
-      .filter((item) => item.quantity > 0))
+export function PaymentPanel({ cart, onSetCart, discount, onSetDiscount, discountType, onSetDiscountType, paymentMethod, onSelectPayment, itemCount, subtotal, discountValue, total, isSaving, payButtonRef, onOpenCheckout, onClearCart, discountRef }) {
+  const updateQuantity = (productId, saleType, amount) => {
+    onSetCart((current) => {
+      const target = current.find((item) => item.product.id === productId && item.saleType === saleType)
+      if (!target) return current
+
+      const nextQuantity = target.quantity + amount
+      const totalProductQuantity = current
+        .filter((item) => item.product.id === productId)
+        .reduce((sum, item) => sum + item.quantity, 0)
+      if (amount > 0 && totalProductQuantity >= target.product.stock) return current
+
+      return current
+        .map((item) => item.product.id === productId && item.saleType === saleType
+          ? { ...item, quantity: nextQuantity }
+          : item)
+        .filter((item) => item.quantity > 0)
+    })
   }
 
   return (
@@ -32,19 +44,20 @@ export function PaymentPanel({ cart, onSetCart, discount, onSetDiscount, discoun
           </div>
         ) : (
           <div className="scrollbar-thin max-h-[210px] space-y-3 overflow-y-auto pr-1">
-            {cart.map(({ product, quantity }) => (
-              <div key={product.id} className="flex items-center justify-between gap-3 border-b border-slate-100 pb-3 last:border-b-0 dark:border-slate-800">
+            {cart.map(({ product, quantity, saleType = 'unit' }) => (
+              <div key={`${product.id}-${saleType}`} className="flex items-center justify-between gap-3 border-b border-slate-100 pb-3 last:border-b-0 dark:border-slate-800">
                 <div className="min-w-0">
                   <strong className="block truncate text-[11px] font-semibold text-slate-800 dark:text-slate-100">{product.name}</strong>
-                  <span className="mt-1 block text-[10px] font-semibold text-blue-700 dark:text-blue-300">{new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', maximumFractionDigits: 0 }).format(product.price * quantity)}</span>
+                  <span className="block text-[10px] text-slate-500 dark:text-slate-400">{getSaleLabel(product, saleType)} · {new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', maximumFractionDigits: 0 }).format(getSalePrice(product, saleType))}</span>
+                  <span className="mt-1 block text-[10px] font-semibold text-blue-700 dark:text-blue-300">{new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', maximumFractionDigits: 0 }).format(getSalePrice(product, saleType) * quantity)}</span>
                 </div>
 
                 <div className="flex items-center gap-2">
-                  <button type="button" className="grid h-7 w-7 place-items-center rounded-lg border border-slate-200 bg-white text-slate-500 transition hover:border-blue-200 hover:bg-blue-50 hover:text-blue-700 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800" onClick={() => updateQuantity(product.id, -1)} aria-label={`Kurangi ${product.name}`}>
+                  <button type="button" className="grid h-7 w-7 place-items-center rounded-lg border border-slate-200 bg-white text-slate-500 transition hover:border-blue-200 hover:bg-blue-50 hover:text-blue-700 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800" onClick={() => updateQuantity(product.id, saleType, -1)} aria-label={`Kurangi ${product.name}`}>
                     <Icon name="minus" size={12} />
                   </button>
                   <span className="min-w-[18px] text-center text-[11px] font-semibold tabular-nums text-slate-700 dark:text-slate-200">{quantity}</span>
-                  <button type="button" className="grid h-7 w-7 place-items-center rounded-lg border border-slate-200 bg-white text-slate-500 transition hover:border-blue-200 hover:bg-blue-50 hover:text-blue-700 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800" onClick={() => updateQuantity(product.id, 1)} aria-label={`Tambah ${product.name}`}>
+                  <button type="button" className="grid h-7 w-7 place-items-center rounded-lg border border-slate-200 bg-white text-slate-500 transition hover:border-blue-200 hover:bg-blue-50 hover:text-blue-700 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800" onClick={() => updateQuantity(product.id, saleType, 1)} aria-label={`Tambah ${product.name}`}>
                     <Icon name="plus" size={12} />
                   </button>
                 </div>
@@ -85,16 +98,6 @@ export function PaymentPanel({ cart, onSetCart, discount, onSetDiscount, discoun
               className="h-8 w-full rounded-lg border border-slate-200 bg-white px-2.5 text-[10px] text-slate-700 outline-none placeholder:text-slate-400 focus:border-blue-400 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
             />
           </div>
-        </div>
-
-        <div className="mt-4 flex items-center justify-between text-[10px] text-slate-500 dark:text-slate-400">
-          <label className="flex items-center gap-2">
-            <strong className="font-semibold text-slate-700 dark:text-slate-200">PPN 11%</strong>
-            <button type="button" className={`flex h-5 w-8 items-center rounded-full p-0.5 transition ${taxEnabled ? 'bg-blue-700' : 'bg-slate-300 dark:bg-slate-700'}`} role="switch" aria-checked={taxEnabled} aria-label="Aktifkan PPN" onClick={onToggleTax}>
-              <span className={`h-4 w-4 rounded-full bg-white transition ${taxEnabled ? 'translate-x-3' : 'translate-x-0'}`} />
-            </button>
-          </label>
-          <span>{new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', maximumFractionDigits: 0 }).format(tax)}</span>
         </div>
 
         <div className="mt-5 flex flex-col gap-1 rounded-xl border border-amber-200/70 bg-gradient-to-r from-amber-50 via-sky-50 to-blue-50 p-3 dark:border-blue-900/70 dark:from-amber-400/10 dark:via-blue-950/80 dark:to-indigo-950/80">
